@@ -33,7 +33,6 @@ namespace AGRIVA
                 luas_lahan_hektar,
                 is_aktif
                 FROM tb_petani";
-
                     using (var adapter = new System.Data.SQLite.SQLiteDataAdapter(query, conn))
                     {
                         System.Data.DataTable dt = new System.Data.DataTable();
