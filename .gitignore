@@ -16,6 +16,12 @@
 # Mono auto generated files
 mono_crash.*
 
+.vs/
+bin/
+obj/
+build_obj/
+packages/
+
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
