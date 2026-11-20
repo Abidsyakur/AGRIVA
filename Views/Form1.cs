@@ -3,6 +3,8 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Windows.Forms;
+using AGRIVA.Models;
+using AGRIVA.Controllers;
 
 namespace AGRIVA
 {
@@ -269,10 +271,33 @@ namespace AGRIVA
                 return;
             }
 
-            DashboardForm dashboard = new DashboardForm();
-            dashboard.FormClosed += (s, args) => this.Close();
-            dashboard.Show();
+            Pengguna pengguna = new LoginController().Masuk(username, password);
+            if (pengguna == null)
+            {
+                _userError = true;
+                _passError = true;
+                lblErrUsername.Text = "Nama pengguna atau kata sandi salah / akun tidak aktif";
+                lblErrUsername.Visible = true;
+                pnlUserBox.Invalidate();
+                pnlPassBox.Invalidate();
+                return;
+            }
 
+            SesiPengguna.SaatIni = pengguna;
+            DashboardForm dashboard = new DashboardForm(pengguna);
+            dashboard.FormClosed += (s, args) =>
+            {
+                if (dashboard.LogoutRequested)
+                {
+                    txtPassword.Clear();
+                    this.Show();
+                }
+                else
+                {
+                    this.Close();
+                }
+            };
+            dashboard.Show();
             this.Hide();
         }
     }

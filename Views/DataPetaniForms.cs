@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using AGRIVA.Controllers;
 
 namespace AGRIVA
 {
@@ -17,38 +18,20 @@ namespace AGRIVA
             InitializeComponent();
             LoadDataPetani();
         }
+        private readonly PetaniController petaniController = new PetaniController();
+
         private void LoadDataPetani()
         {
             try
             {
-                using (var conn = Koneksi.GetConnection())
-                {
-                    conn.Open();
-
-                    string query = @"SELECT
-                id_petani,
-                nama_petani,
-                desa,
-                no_telepon,
-                luas_lahan_hektar,
-                is_aktif
-                FROM tb_petani";
-                    using (var adapter = new System.Data.SQLite.SQLiteDataAdapter(query, conn))
-                    {
-                        System.Data.DataTable dt = new System.Data.DataTable();
-                        adapter.Fill(dt);
-
-                        dgvTabelPetani.AutoGenerateColumns = false;
-
-                        colNamaPetani.DataPropertyName = "nama_petani";
-                        colDesa.DataPropertyName = "desa";
-                        colNoHP.DataPropertyName = "no_telepon";
-                        colLuasLahan.DataPropertyName = "luas_lahan_hektar";
-                        colStatus.DataPropertyName = "is_aktif";
-
-                        dgvTabelPetani.DataSource = dt;
-                    }
-                }
+                System.Data.DataTable dt = petaniController.GetDataPetani();
+                dgvTabelPetani.AutoGenerateColumns = false;
+                colNamaPetani.DataPropertyName = "nama_petani";
+                colDesa.DataPropertyName = "desa";
+                colNoHP.DataPropertyName = "no_telepon";
+                colLuasLahan.DataPropertyName = "luas_lahan_hektar";
+                colStatus.DataPropertyName = "is_aktif";
+                dgvTabelPetani.DataSource = dt;
             }
             catch (Exception ex)
             {

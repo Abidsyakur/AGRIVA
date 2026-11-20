@@ -1,18 +1,27 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Data.SQLite;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows.Forms;
+using AGRIVA.Controllers;
+using AGRIVA.Models;
 
 namespace AGRIVA
 {
     public partial class DashboardForm : Form
     {
+        private readonly PanenController panenController = new PanenController();
+        private readonly KualitasController kualitasController = new KualitasController();
+        private readonly PenggunaController penggunaController = new PenggunaController();
+        private readonly DashboardController dashboardController = new DashboardController();
+        private readonly PetaniController petaniController = new PetaniController();
+        private readonly KomoditasController komoditasController = new KomoditasController();
+        private readonly Pengguna currentUser;
+        public bool LogoutRequested { get; private set; }
         // ══════════════════════════════════════════════════════════
         // PALET WARNA PERSIS FIGMA
         // ══════════════════════════════════════════════════════════
@@ -76,8 +85,11 @@ namespace AGRIVA
             public override string ToString() => Name;
         }
 
-        public DashboardForm()
+        public DashboardForm() : this(SesiPengguna.SaatIni) { }
+
+        public DashboardForm(Pengguna pengguna)
         {
+            currentUser = pengguna;
             InitializeComponent();
         }
 
@@ -92,6 +104,7 @@ namespace AGRIVA
             PopulateSetorDropdowns();
             WireNavigation();
             WireEvents();
+            TerapkanHakAkses();
 
             lblLogoMain.Visible = false;
             lblLogoSub.Visible = false;
@@ -107,12 +120,23 @@ namespace AGRIVA
             else if (hour >= 11 && hour < 15) greeting = "Selamat siang";
             else if (hour >= 18 || hour < 4) greeting = "Selamat malam";
 
-            lblDashGreeting.Text = greeting + ", Bapak Budi";
+            string namaPengguna = currentUser == null || string.IsNullOrWhiteSpace(currentUser.NamaLengkap)
+                ? "Pengguna" : currentUser.NamaLengkap;
+            lblDashGreeting.Text = greeting + ", " + namaPengguna;
+            lblUsername.Text = namaPengguna;
+            lblUsername.AutoSize = true;
+            lblAdminBadge.Text = currentUser == null ? "Pengguna" : currentUser.Peran;
+            lblAdminBadge.Width = Math.Max(62, TextRenderer.MeasureText(lblAdminBadge.Text, lblAdminBadge.Font).Width + 18);
+            lblUsername.Location = new Point(btnKeluar.Left - lblUsername.Width - 18, 25);
+            lblAdminBadge.Location = new Point(lblUsername.Left - lblAdminBadge.Width - 12, 23);
             string dateStr = DateTime.Now.ToString("d MMMM yyyy", new CultureInfo("id-ID"));
             lblDashSubtitle.Text = "Ringkasan gudang hari ini - " + dateStr;
 
             // Default start on Setor Panen or Petani
-            SwitchToPage(pnlPetani, btnNavPetani);
+            if (currentUser != null && string.Equals(currentUser.Peran, "Supir", StringComparison.OrdinalIgnoreCase))
+                SwitchToMuatanPage("Muatan Barang", "Centang barang muatan, isi tujuan, lalu buat surat jalan", btnNavMuatanBarang);
+            else
+                SwitchToPage(pnlPetani, btnNavPetani);
             LoadDashboardStats();
             LoadPetaniData();
             LoadProdukData();
@@ -377,7 +401,7 @@ namespace AGRIVA
                     pe.Graphics.DrawPath(pen, path);
                     var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
                     using (var tb = new SolidBrush(C_TEXT_DARK))
-                        pe.Graphics.DrawString("Admin", lblAdminBadge.Font, tb, rect, sf);
+                        pe.Graphics.DrawString(lblAdminBadge.Text, lblAdminBadge.Font, tb, rect, sf);
                 }
             };
 
@@ -1402,46 +1426,30 @@ namespace AGRIVA
                 cmbSetorProduk.Items.Clear();
                 cmbSetorKualitas.Items.Clear();
 
-                using (var conn = Koneksi.GetConnection())
+                // Seluruh pilihan dropdown diambil melalui Controller.
+                foreach (Petani petani in petaniController.AmbilPetaniAktif())
                 {
-                    conn.Open();
-                    // Petani
-                    using (var cmd = new SQLiteCommand("SELECT id_petani, nama_petani FROM tb_petani WHERE is_aktif = 1 ORDER BY nama_petani", conn))
-                    using (var dr = cmd.ExecuteReader())
-                    {
-                        while (dr.Read())
-                        {
-                            cmbSetorPetani.Items.Add(new ComboItem { Id = Convert.ToInt32(dr[0]), Name = dr[1].ToString() });
-                        }
-                    }
+                    cmbSetorPetani.Items.Add(new ComboItem { Id = petani.IdPetani, Name = petani.NamaPetani });
+                }
 
-                    // Komoditas
-                    using (var cmd = new SQLiteCommand("SELECT id_komoditas, nama_komoditas, harga_per_kg FROM tb_komoditas WHERE is_aktif = 1 ORDER BY nama_komoditas", conn))
-                    using (var dr = cmd.ExecuteReader())
+                foreach (Komoditas komoditas in komoditasController.AmbilKomoditasAktif())
+                {
+                    cmbSetorProduk.Items.Add(new ComboItem
                     {
-                        while (dr.Read())
-                        {
-                            cmbSetorProduk.Items.Add(new ComboItem {
-                                Id = Convert.ToInt32(dr[0]),
-                                Name = dr[1].ToString(),
-                                Price = Convert.ToDouble(dr[2])
-                            });
-                        }
-                    }
+                        Id = komoditas.IdKomoditas,
+                        Name = komoditas.NamaKomoditas,
+                        Price = komoditas.HargaPerKg
+                    });
+                }
 
-                    // Kualitas
-                    using (var cmd = new SQLiteCommand("SELECT id_kualitas, nama_kualitas, persen_penalti FROM tb_kualitas ORDER BY id_kualitas", conn))
-                    using (var dr = cmd.ExecuteReader())
+                foreach (Kualitas kualitas in kualitasController.AmbilSemua())
+                {
+                    cmbSetorKualitas.Items.Add(new ComboItem
                     {
-                        while (dr.Read())
-                        {
-                            cmbSetorKualitas.Items.Add(new ComboItem {
-                                Id = Convert.ToInt32(dr[0]),
-                                Name = dr[1].ToString(),
-                                Penalty = Convert.ToDouble(dr[2])
-                            });
-                        }
-                    }
+                        Id = kualitas.IdKualitas,
+                        Name = kualitas.NamaKualitas,
+                        Penalty = kualitas.PersenPenalti
+                    });
                 }
 
                 if (cmbSetorKualitas.Items.Count > 0) cmbSetorKualitas.SelectedIndex = 0;
@@ -1508,45 +1516,28 @@ namespace AGRIVA
                 dgvSetorPanen.Rows.Clear();
                 int rowCount = 0;
 
-                using (var conn = Koneksi.GetConnection())
+                DataTable riwayatSetoran = panenController.AmbilRiwayatSetoran();
+                foreach (DataRow dr in riwayatSetoran.Rows)
                 {
-                    conn.Open();
-                    string sql = @"
-SELECT p.tgl_masuk, pt.nama_petani, k.nama_komoditas, q.nama_kualitas, p.berat_kg, pg.username, p.no_transaksi
-FROM tb_panen p
-JOIN tb_petani pt ON p.id_petani = pt.id_petani
-JOIN tb_komoditas k ON p.id_komoditas = k.id_komoditas
-JOIN tb_kualitas q ON p.id_kualitas = q.id_kualitas
-JOIN tb_pengguna pg ON p.id_petugas = pg.id_pengguna
-ORDER BY p.id_panen DESC";
-
-                    using (var cmd = new SQLiteCommand(sql, conn))
-                    using (var dr = cmd.ExecuteReader())
+                    rowCount++;
+                    string tglRaw = dr["tgl_masuk"].ToString();
+                    string tglStr = tglRaw;
+                    DateTime dt;
+                    if (DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt) ||
+                        DateTime.TryParse(tglRaw, out dt))
                     {
-                        while (dr.Read())
-                        {
-                            rowCount++;
-                            string tglRaw = dr[0].ToString();
-                            string tglStr = tglRaw;
-                            DateTime dt;
-                            if (DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt) ||
-                                DateTime.TryParse(tglRaw, out dt))
-                            {
-                                tglStr = dt.ToString("dd/MM/yy");
-                            }
-
-                            string petani = dr[1].ToString();
-                            string produk = dr[2].ToString();
-                            string kualitasRaw = dr[3].ToString();
-                            string grade = kualitasRaw.Replace("Grade ", "").Trim();
-
-                            double berat = Convert.ToDouble(dr[4]);
-                            string beratStr = (berat % 1 == 0 ? berat.ToString("0") : berat.ToString("0.#")) + " Kg";
-                            string petugas = "Bapak Budi";
-
-                            dgvSetorPanen.Rows.Add(tglStr, petani, produk, grade, beratStr, petugas);
-                        }
+                        tglStr = dt.ToString("dd/MM/yy");
                     }
+
+                    string petani = dr["nama_petani"].ToString();
+                    string produk = dr["nama_komoditas"].ToString();
+                    string kualitasRaw = dr["nama_kualitas"].ToString();
+                    string grade = kualitasRaw.Replace("Grade ", "").Trim();
+                    double berat = Convert.ToDouble(dr["berat_kg"]);
+                    string beratStr = (berat % 1 == 0 ? berat.ToString("0") : berat.ToString("0.#")) + " Kg";
+                    string petugas = currentUser == null ? "-" : currentUser.NamaLengkap;
+
+                    dgvSetorPanen.Rows.Add(tglStr, petani, produk, grade, beratStr, petugas);
                 }
 
                 if (rowCount == 0)
@@ -1755,15 +1746,7 @@ ORDER BY p.id_panen DESC";
 
             try
             {
-                using (var conn = Koneksi.GetConnection())
-                {
-                    conn.Open();
-                    using (var cmd = new SQLiteCommand("UPDATE tb_panen SET id_status_barang = 3 WHERE id_panen = @id", conn))
-                    {
-                        cmd.Parameters.AddWithValue("@id", _selectedBatalPanenId);
-                        cmd.ExecuteNonQuery();
-                    }
-                }
+                panenController.Batalkan(_selectedBatalPanenId);
 
                 CloseModalBatal();
                 LoadMuatanData();
@@ -1789,52 +1772,32 @@ ORDER BY p.id_panen DESC";
                 DateTime dari = dtpMuatanDari.Value.Date;
                 DateTime sampai = dtpMuatanSampai.Value.Date.AddDays(1).AddSeconds(-1);
 
-                using (var conn = Koneksi.GetConnection())
+                DataTable dataLaporan = panenController.AmbilDataLaporan();
+                foreach (DataRow dr in dataLaporan.Rows)
                 {
-                    conn.Open();
-                    string sql = @"
-SELECT p.id_panen, p.tgl_masuk, pt.nama_petani, k.nama_komoditas, p.berat_kg, p.total_uang, sb.nama_status
-FROM tb_panen p
-JOIN tb_petani pt ON p.id_petani = pt.id_petani
-JOIN tb_komoditas k ON p.id_komoditas = k.id_komoditas
-JOIN tb_status_barang sb ON p.id_status_barang = sb.id_status_barang
-ORDER BY p.id_panen DESC";
+                    int id = Convert.ToInt32(dr["id_panen"]);
+                    string tglRaw = dr["tgl_masuk"].ToString();
+                    DateTime dt;
+                    if (!DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                        DateTime.TryParse(tglRaw, out dt);
 
-                    using (var cmd = new SQLiteCommand(sql, conn))
-                    using (var dr = cmd.ExecuteReader())
-                    {
-                        while (dr.Read())
-                        {
-                            int id = Convert.ToInt32(dr[0]);
-                            string tglRaw = dr[1].ToString();
-                            DateTime dt;
-                            if (!DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                                DateTime.TryParse(tglRaw, out dt);
+                    string status = dr["nama_status"].ToString();
+                    if (status == "Belum Muat") status = "Di Gudang";
+                    else if (status == "Sudah Muat") status = "Terkirim";
+                    if (statusFilter != "Semua Status" && status != statusFilter) continue;
 
-                            string status = dr[6].ToString();
-                            // Status mapping
-                            if (status == "Belum Muat") status = "Di Gudang";
-                            else if (status == "Sudah Muat") status = "Terkirim";
+                    string tglStr = dt.ToString("dd/MM/yy");
+                    string petani = dr["nama_petani"].ToString();
+                    string komoditas = dr["nama_komoditas"].ToString();
+                    double berat = Convert.ToDouble(dr["berat_kg"]);
+                    double total = Convert.ToDouble(dr["total_uang"]);
 
-                            // Filter status
-                            if (statusFilter != "Semua Status" && status != statusFilter) continue;
-
-                            string tglStr = dt.ToString("dd/MM/yy");
-                            string petani = dr[2].ToString();
-                            string komoditas = dr[3].ToString();
-                            double berat = Convert.ToDouble(dr[4]);
-                            double total = Convert.ToDouble(dr[5]);
-
-                            totalCount++;
-                            totalBerat += berat;
-                            totalUang += total;
-
-                            string beratStr = (berat % 1 == 0 ? berat.ToString("0") : berat.ToString("0.#")) + " Kg";
-                            string totalStr = "Rp " + total.ToString("N0", new CultureInfo("id-ID"));
-
-                            dgvMuatanBarang.Rows.Add(id, tglStr, petani, komoditas, beratStr, totalStr, status, "");
-                        }
-                    }
+                    totalCount++;
+                    totalBerat += berat;
+                    totalUang += total;
+                    string beratStr = (berat % 1 == 0 ? berat.ToString("0") : berat.ToString("0.#")) + " Kg";
+                    string totalStr = "Rp " + total.ToString("N0", new CultureInfo("id-ID"));
+                    dgvMuatanBarang.Rows.Add(id, tglStr, petani, komoditas, beratStr, totalStr, status, "");
                 }
 
                 lblMuatanSummaryJumlah.Text = $"Jumlah: {totalCount:D2} Transaksi";
@@ -2004,34 +1967,20 @@ ORDER BY p.id_panen DESC";
             try
             {
                 dgvPetani.Rows.Clear();
-                int rowCount = 0;
-
-                using (var conn = Koneksi.GetConnection())
+                DataTable data = petaniController.GetDataPetani();
+                int rowCount = data.Rows.Count;
+                foreach (DataRow row in data.Rows)
                 {
-                    conn.Open();
-                    string sql = "SELECT id_petani, nama_petani, desa, no_telepon, luas_lahan_hektar, is_aktif FROM tb_petani ORDER BY id_petani";
-                    using (var cmd = new SQLiteCommand(sql, conn))
-                    using (var dr = cmd.ExecuteReader())
-                    {
-                        while (dr.Read())
-                        {
-                            rowCount++;
-                            int id = Convert.ToInt32(dr[0]);
-                            string nama = dr[1].ToString();
-                            string desa = dr[2].ToString();
-                            string noHp = dr[3].ToString();
-                            double luas = Convert.ToDouble(dr[4]);
-
-                            string luasStr = (luas % 1 == 0)
-                                ? luas.ToString("0", new CultureInfo("id-ID")) + " ha"
-                                : luas.ToString("0.#", new CultureInfo("id-ID")) + " ha";
-
-                            int aktif = Convert.ToInt32(dr[5]);
-                            string statusStr = aktif == 1 ? "Aktif" : "Tidak Aktif";
-
-                            dgvPetani.Rows.Add(id, nama, desa, noHp, luasStr, statusStr, "✏");
-                        }
-                    }
+                    int id = Convert.ToInt32(row["id_petani"]);
+                    string nama = row["nama_petani"].ToString();
+                    string desa = row["desa"].ToString();
+                    string noHp = row["no_telepon"].ToString();
+                    double luas = Convert.ToDouble(row["luas_lahan_hektar"]);
+                    string luasStr = (luas % 1 == 0)
+                        ? luas.ToString("0", new CultureInfo("id-ID")) + " ha"
+                        : luas.ToString("0.#", new CultureInfo("id-ID")) + " ha";
+                    string statusStr = Convert.ToInt32(row["is_aktif"]) == 1 ? "Aktif" : "Tidak Aktif";
+                    dgvPetani.Rows.Add(id, nama, desa, noHp, luasStr, statusStr, "✏");
                 }
 
                 if (rowCount == 0)
@@ -2049,13 +1998,9 @@ ORDER BY p.id_panen DESC";
                     pnlPetaniTableOuter.Height = 46 + (displayRows * 52) + 5;
                     dgvPetani.ScrollBars = rowCount > maxDisplayRows ? ScrollBars.Vertical : ScrollBars.None;
                 }
-
                 LayoutAll();
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Gagal memuat data petani: " + ex.Message);
-            }
+            catch (Exception ex) { MessageBox.Show("Gagal memuat data petani: " + ex.Message); }
         }
 
         private void LoadProdukData()
@@ -2063,39 +2008,23 @@ ORDER BY p.id_panen DESC";
             try
             {
                 dgvProdukPanen.Rows.Clear();
-                int rowCount = 0;
-
-                using (var conn = Koneksi.GetConnection())
+                DataTable data = komoditasController.AmbilSemua();
+                int rowCount = data.Rows.Count;
+                foreach (DataRow row in data.Rows)
                 {
-                    conn.Open();
-                    string sql = "SELECT id_komoditas, nama_komoditas, harga_per_kg, tgl_update_harga, is_aktif FROM tb_komoditas ORDER BY id_komoditas";
-                    using (var cmd = new SQLiteCommand(sql, conn))
-                    using (var dr = cmd.ExecuteReader())
-                    {
-                        while (dr.Read())
-                        {
-                            rowCount++;
-                            int id = Convert.ToInt32(dr[0]);
-                            string nama = dr[1].ToString();
-                            double harga = Convert.ToDouble(dr[2]);
-                            string hargaStr = "Rp " + harga.ToString("N0", new CultureInfo("id-ID"));
-
-                            string tglRaw = dr[3].ToString();
-                            string tglStr = tglRaw;
-                            DateTime dt;
-                            if (DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt) ||
-                                DateTime.TryParse(tglRaw, new CultureInfo("id-ID"), DateTimeStyles.None, out dt) ||
-                                DateTime.TryParse(tglRaw, out dt))
-                            {
-                                tglStr = dt.ToString("dd MMMM yyyy", new CultureInfo("id-ID"));
-                            }
-
-                            int aktif = Convert.ToInt32(dr[4]);
-                            string statusStr = aktif == 1 ? "Aktif" : "Tidak Aktif";
-
-                            dgvProdukPanen.Rows.Add(id, nama, hargaStr, tglStr, statusStr, "✏");
-                        }
-                    }
+                    int id = Convert.ToInt32(row["id_komoditas"]);
+                    string nama = row["nama_komoditas"].ToString();
+                    double harga = Convert.ToDouble(row["harga_per_kg"]);
+                    string hargaStr = "Rp " + harga.ToString("N0", new CultureInfo("id-ID"));
+                    string tglRaw = row["tgl_update_harga"].ToString();
+                    string tglStr = tglRaw;
+                    DateTime dt;
+                    if (DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt) ||
+                        DateTime.TryParse(tglRaw, new CultureInfo("id-ID"), DateTimeStyles.None, out dt) ||
+                        DateTime.TryParse(tglRaw, out dt))
+                        tglStr = dt.ToString("dd MMMM yyyy", new CultureInfo("id-ID"));
+                    string statusStr = Convert.ToInt32(row["is_aktif"]) == 1 ? "Aktif" : "Tidak Aktif";
+                    dgvProdukPanen.Rows.Add(id, nama, hargaStr, tglStr, statusStr, "✏");
                 }
 
                 if (rowCount == 0)
@@ -2113,31 +2042,19 @@ ORDER BY p.id_panen DESC";
                     pnlProdukPanenTableOuter.Height = 46 + (displayRows * 52) + 5;
                     dgvProdukPanen.ScrollBars = rowCount > maxDisplayRows ? ScrollBars.Vertical : ScrollBars.None;
                 }
-
                 LayoutAll();
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Gagal memuat data produk: " + ex.Message);
-            }
+            catch (Exception ex) { MessageBox.Show("Gagal memuat data produk: " + ex.Message); }
         }
 
         private void LoadDashboardStats()
         {
             try
             {
-                using (var conn = Koneksi.GetConnection())
-                {
-                    conn.Open();
-                    using (var cmd = new SQLiteCommand("SELECT COUNT(*) FROM tb_petani WHERE is_aktif = 1", conn))
-                        statPetaniAktif = Convert.ToInt32(cmd.ExecuteScalar() ?? 8);
-
-                    using (var cmd = new SQLiteCommand("SELECT IFNULL(SUM(berat_kg), 2580) FROM tb_panen WHERE id_status_barang = 1", conn))
-                        statStokKg = Convert.ToDouble(cmd.ExecuteScalar() ?? 2580);
-
-                    using (var cmd = new SQLiteCommand("SELECT COUNT(*) FROM tb_panen WHERE date(tgl_masuk) = date('now') OR no_transaksi LIKE 'TRX-TODAY%'", conn))
-                        statTransaksi = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
-                }
+                DashboardStats stats = dashboardController.AmbilStatistik();
+                statPetaniAktif = stats.PetaniAktif;
+                statStokKg = stats.StokKg;
+                statTransaksi = stats.TransaksiHariIni;
             }
             catch
             {
@@ -2238,37 +2155,15 @@ ORDER BY p.id_panen DESC";
             int isAktif = cmbModalStatus.SelectedIndex == 0 ? 1 : 0;
             try
             {
-                using (var conn = Koneksi.GetConnection())
+                petaniController.SimpanPetani(new Petani
                 {
-                    conn.Open();
-                    if (editPetaniId == -1)
-                    {
-                        string insertSql = "INSERT INTO tb_petani (nama_petani, desa, no_telepon, luas_lahan_hektar, is_aktif) VALUES (@nama, @desa, @hp, @luas, @aktif)";
-                        using (var cmd = new SQLiteCommand(insertSql, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@nama", txtModalNama.Text.Trim());
-                            cmd.Parameters.AddWithValue("@desa", txtModalDesa.Text.Trim());
-                            cmd.Parameters.AddWithValue("@hp", txtModalNoHp.Text.Trim());
-                            cmd.Parameters.AddWithValue("@luas", luas);
-                            cmd.Parameters.AddWithValue("@aktif", isAktif);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                    else
-                    {
-                        string updateSql = "UPDATE tb_petani SET nama_petani=@nama, desa=@desa, no_telepon=@hp, luas_lahan_hektar=@luas, is_aktif=@aktif WHERE id_petani=@id";
-                        using (var cmd = new SQLiteCommand(updateSql, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@nama", txtModalNama.Text.Trim());
-                            cmd.Parameters.AddWithValue("@desa", txtModalDesa.Text.Trim());
-                            cmd.Parameters.AddWithValue("@hp", txtModalNoHp.Text.Trim());
-                            cmd.Parameters.AddWithValue("@luas", luas);
-                            cmd.Parameters.AddWithValue("@aktif", isAktif);
-                            cmd.Parameters.AddWithValue("@id", editPetaniId);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                }
+                    IdPetani = editPetaniId,
+                    NamaPetani = txtModalNama.Text.Trim(),
+                    Desa = txtModalDesa.Text.Trim(),
+                    NoTelepon = txtModalNoHp.Text.Trim(),
+                    LuasLahanHektar = luas,
+                    IsAktif = isAktif
+                });
 
                 CloseModal();
                 LoadPetaniData();
@@ -2353,39 +2248,15 @@ ORDER BY p.id_panen DESC";
             if (hasErr) return;
 
             int isAktif = cmbModalProdStatus.SelectedIndex == 0 ? 1 : 0;
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
-
             try
             {
-                using (var conn = Koneksi.GetConnection())
+                komoditasController.Simpan(new Komoditas
                 {
-                    conn.Open();
-                    if (editProdukId == -1)
-                    {
-                        string insertSql = "INSERT INTO tb_komoditas (nama_komoditas, harga_per_kg, tgl_update_harga, is_aktif) VALUES (@nama, @harga, @tgl, @aktif)";
-                        using (var cmd = new SQLiteCommand(insertSql, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@nama", txtModalProdNama.Text.Trim());
-                            cmd.Parameters.AddWithValue("@harga", hargaVal);
-                            cmd.Parameters.AddWithValue("@tgl", today);
-                            cmd.Parameters.AddWithValue("@aktif", isAktif);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                    else
-                    {
-                        string updateSql = "UPDATE tb_komoditas SET nama_komoditas=@nama, harga_per_kg=@harga, tgl_update_harga=@tgl, is_aktif=@aktif WHERE id_komoditas=@id";
-                        using (var cmd = new SQLiteCommand(updateSql, conn))
-                        {
-                            cmd.Parameters.AddWithValue("@nama", txtModalProdNama.Text.Trim());
-                            cmd.Parameters.AddWithValue("@harga", hargaVal);
-                            cmd.Parameters.AddWithValue("@tgl", today);
-                            cmd.Parameters.AddWithValue("@aktif", isAktif);
-                            cmd.Parameters.AddWithValue("@id", editProdukId);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                }
+                    IdKomoditas = editProdukId,
+                    NamaKomoditas = txtModalProdNama.Text.Trim(),
+                    HargaPerKg = Convert.ToInt32(hargaVal),
+                    IsAktif = isAktif
+                });
 
                 CloseModalProduk();
                 LoadProdukData();
@@ -2438,26 +2309,20 @@ ORDER BY p.id_panen DESC";
             string noTrx = "TRX-" + DateTime.Now.ToString("yyyyMMddHHmmss");
             try
             {
-                using (var conn = Koneksi.GetConnection())
+                panenController.Simpan(new Panen
                 {
-                    conn.Open();
-                    string insertSql = @"
-INSERT INTO tb_panen (no_transaksi, tgl_masuk, id_petani, id_komoditas, id_kualitas, id_petugas, id_status_barang, id_status_bayar, berat_kg, harga_saat_transaksi, persen_penalti, total_uang)
-VALUES (@no, datetime('now', 'localtime'), @petani, @komoditas, @kualitas, 1, 1, 2, @berat, @harga, @penalti, @total)";
-
-                    using (var cmd = new SQLiteCommand(insertSql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@no", noTrx);
-                        cmd.Parameters.AddWithValue("@petani", selPetani.Id);
-                        cmd.Parameters.AddWithValue("@komoditas", selProduk.Id);
-                        cmd.Parameters.AddWithValue("@kualitas", selKualitas.Id);
-                        cmd.Parameters.AddWithValue("@berat", berat);
-                        cmd.Parameters.AddWithValue("@harga", currentHargaKg);
-                        cmd.Parameters.AddWithValue("@penalti", currentPenalti);
-                        cmd.Parameters.AddWithValue("@total", calculatedTotal);
-                        cmd.ExecuteNonQuery();
-                    }
-                }
+                    NoTransaksi = noTrx,
+                    IdPetani = selPetani.Id,
+                    IdKomoditas = selProduk.Id,
+                    IdKualitas = selKualitas.Id,
+                    // Mengikuti nilai default yang digunakan aplikasi sebelum refactoring.
+                    IdPetugas = 1,
+                    IdStatusBarang = 1,
+                    BeratKg = berat,
+                    HargaSaatTransaksi = currentHargaKg,
+                    PersenPenalti = currentPenalti,
+                    TotalUang = calculatedTotal
+                });
 
                 ResetSetorForm();
                 LoadSetorData();
@@ -2580,6 +2445,21 @@ VALUES (@no, datetime('now', 'localtime'), @petani, @komoditas, @kualitas, 1, 1,
             btnNavManajemenUser.Click += (s, e) => SwitchToUserPage(btnNavManajemenUser);
         }
 
+        private void TerapkanHakAkses()
+        {
+            string peran = currentUser == null ? "" : (currentUser.Peran ?? "");
+            bool admin = string.Equals(peran, "Admin", StringComparison.OrdinalIgnoreCase);
+            bool supir = string.Equals(peran, "Supir", StringComparison.OrdinalIgnoreCase);
+
+            // Petugas Gudang dapat mengelola proses operasional; Supir hanya melihat dashboard dan muatan.
+            btnNavPetani.Visible = !supir;
+            btnNavProdukPanen.Visible = !supir;
+            btnNavSetorPanen.Visible = !supir;
+            btnNavLaporan.Visible = !supir;
+            btnNavManajemenUser.Visible = admin;
+            btnBackupDatabase.Visible = admin;
+        }
+
         private void WireEvents()
         {
             tmrToast.Tick += (s, e) =>
@@ -2592,9 +2472,9 @@ VALUES (@no, datetime('now', 'localtime'), @petani, @komoditas, @kualitas, 1, 1,
             {
                 if (MessageBox.Show("Yakin ingin keluar dari akun?", "Konfirmasi", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 {
-                    FormLogin login = new FormLogin();
-                    login.Show();
-                    this.Dispose();
+                    SesiPengguna.Akhiri();
+                    LogoutRequested = true;
+                    this.Close();
                 }
             };
 
@@ -2792,40 +2672,22 @@ VALUES (@no, datetime('now', 'localtime'), @petani, @komoditas, @kualitas, 1, 1,
             try
             {
                 dgvMuatanBarang.Rows.Clear();
-                using (var conn = Koneksi.GetConnection())
+                DataTable dataMuatan = panenController.AmbilDataMuatan();
+                foreach (DataRow dr in dataMuatan.Rows)
                 {
-                    conn.Open();
-                    string sql = @"
-SELECT p.id_panen, k.nama_komoditas, pt.nama_petani, q.nama_kualitas, p.berat_kg, p.tgl_masuk, sb.nama_status
-FROM tb_panen p
-JOIN tb_petani pt ON p.id_petani = pt.id_petani
-JOIN tb_komoditas k ON p.id_komoditas = k.id_komoditas
-JOIN tb_kualitas q ON p.id_kualitas = q.id_kualitas
-JOIN tb_status_barang sb ON p.id_status_barang = sb.id_status_barang
-WHERE p.id_status_barang = 1 OR sb.nama_status = 'Di Gudang' OR sb.nama_status = 'Belum Muat'
-ORDER BY p.id_panen DESC";
+                    int id = Convert.ToInt32(dr["id_panen"]);
+                    string komoditas = dr["nama_komoditas"].ToString();
+                    string petani = dr["nama_petani"].ToString();
+                    string kualitas = dr["nama_kualitas"].ToString();
+                    double berat = Convert.ToDouble(dr["berat_kg"]);
+                    string tglRaw = dr["tgl_masuk"].ToString();
+                    DateTime dt;
+                    if (!DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+                        DateTime.TryParse(tglRaw, out dt);
 
-                    using (var cmd = new SQLiteCommand(sql, conn))
-                    using (var dr = cmd.ExecuteReader())
-                    {
-                        while (dr.Read())
-                        {
-                            int id = Convert.ToInt32(dr[0]);
-                            string komoditas = dr[1].ToString();
-                            string petani = dr[2].ToString();
-                            string kualitas = dr[3].ToString();
-                            double berat = Convert.ToDouble(dr[4]);
-                            string tglRaw = dr[5].ToString();
-                            DateTime dt;
-                            if (!DateTime.TryParse(tglRaw, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
-                                DateTime.TryParse(tglRaw, out dt);
-
-                            string tglFmt = dt.ToString("d MMMM yyyy", new CultureInfo("id-ID"));
-                            string status = "Di Gudang";
-
-                            dgvMuatanBarang.Rows.Add(false, id, komoditas, petani, kualitas, $"{berat:N0} Kg", tglFmt, status);
-                        }
-                    }
+                    string tglFmt = dt.ToString("d MMMM yyyy", new CultureInfo("id-ID"));
+                    string status = "Di Gudang";
+                    dgvMuatanBarang.Rows.Add(false, id, komoditas, petani, kualitas, $"{berat:N0} Kg", tglFmt, status);
                 }
 
                 int rowCount = dgvMuatanBarang.Rows.Count;
@@ -2835,22 +2697,10 @@ ORDER BY p.id_panen DESC";
                     lblEmptyMuatan.Visible = true;
                     pnlMuatanTableOuter.Height = 44 + 80 + 5;
                 }
-                else
-                {
-                    lblEmptyMuatan.Visible = false;
-                    dgvMuatanBarang.Visible = true;
-                    int maxDisplayRows = 5;
-                    int displayRows = Math.Min(rowCount, maxDisplayRows);
-                    pnlMuatanTableOuter.Height = 44 + (displayRows * 50) + 5;
-                    dgvMuatanBarang.ScrollBars = rowCount > maxDisplayRows ? ScrollBars.Vertical : ScrollBars.None;
-                }
-
-                UpdateMuatanDipilihSummary();
-                LayoutAll();
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Gagal memuat muatan barang: " + ex.Message);
+                MessageBox.Show("Gagal memuat data muatan: " + ex.Message);
             }
         }
 
@@ -2968,18 +2818,7 @@ ORDER BY p.id_panen DESC";
 
             try
             {
-                using (var conn = Koneksi.GetConnection())
-                {
-                    conn.Open();
-                    foreach (int id in selectedIds)
-                    {
-                        using (var cmd = new SQLiteCommand("UPDATE tb_panen SET id_status_barang = 2 WHERE id_panen = @id", conn))
-                        {
-                            cmd.Parameters.AddWithValue("@id", id);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                }
+                panenController.TandaiTerkirim(selectedIds);
 
                 ShowToast("Surat Jalan telah dibuat", $"{selectedIds.Count} muatan barang siap dikirim");
                 LoadMuatanBarangData();
@@ -3035,26 +2874,16 @@ ORDER BY p.id_panen DESC";
             try
             {
                 dgvOther.Rows.Clear();
-                using (var conn = Koneksi.GetConnection())
+                DataTable pengguna = penggunaController.AmbilSemua();
+                foreach (DataRow row in pengguna.Rows)
                 {
-                    conn.Open();
-                    string sql = "SELECT id_pengguna, COALESCE(nama_lengkap, username), username, COALESCE(peran, 'Admin'), is_aktif FROM tb_pengguna ORDER BY id_pengguna ASC";
-                    using (var cmd = new SQLiteCommand(sql, conn))
-                    using (var dr = cmd.ExecuteReader())
-                    {
-                        while (dr.Read())
-                        {
-                            int id = Convert.ToInt32(dr[0]);
-                            string nama = dr[1].ToString();
-                            string uname = dr[2].ToString();
-                            string peran = dr[3].ToString();
-                            int aktif = Convert.ToInt32(dr[4]);
-
-                            dgvOther.Rows.Add(id, nama, uname, peran, aktif == 1 ? "Aktif" : "Tidak Aktif", "✎");
-                        }
-                    }
+                    int id = Convert.ToInt32(row[0]);
+                    string nama = row[1].ToString();
+                    string uname = row[2].ToString();
+                    string peran = row[3].ToString();
+                    int aktif = Convert.ToInt32(row[4]);
+                    dgvOther.Rows.Add(id, nama, uname, peran, aktif == 1 ? "Aktif" : "Tidak Aktif", "✎");
                 }
-
                 pnlOtherTableOuter.Height = 44 + (dgvOther.Rows.Count * 48) + 5;
             }
             catch (Exception ex)
@@ -3266,35 +3095,15 @@ ORDER BY p.id_panen DESC";
 
             try
             {
-                using (var conn = Koneksi.GetConnection())
+                penggunaController.Simpan(new Pengguna
                 {
-                    conn.Open();
-                    if (_selectedEditUserId == -1)
-                    {
-                        using (var cmd = new SQLiteCommand("INSERT INTO tb_pengguna (nama_lengkap, username, peran, id_role, is_aktif) VALUES (@n, @u, @p, @r, @a)", conn))
-                        {
-                            cmd.Parameters.AddWithValue("@n", nama);
-                            cmd.Parameters.AddWithValue("@u", uname);
-                            cmd.Parameters.AddWithValue("@p", peran);
-                            cmd.Parameters.AddWithValue("@r", roleId);
-                            cmd.Parameters.AddWithValue("@a", isAktif);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                    else
-                    {
-                        using (var cmd = new SQLiteCommand("UPDATE tb_pengguna SET nama_lengkap = @n, username = @u, peran = @p, id_role = @r, is_aktif = @a WHERE id_pengguna = @id", conn))
-                        {
-                            cmd.Parameters.AddWithValue("@n", nama);
-                            cmd.Parameters.AddWithValue("@u", uname);
-                            cmd.Parameters.AddWithValue("@p", peran);
-                            cmd.Parameters.AddWithValue("@r", roleId);
-                            cmd.Parameters.AddWithValue("@a", isAktif);
-                            cmd.Parameters.AddWithValue("@id", _selectedEditUserId);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                }
+                    IdPengguna = _selectedEditUserId,
+                    NamaLengkap = nama,
+                    Username = uname,
+                    Peran = peran,
+                    IdRole = roleId,
+                    IsAktif = isAktif
+                });
 
                 CloseModalUser();
                 LoadUserData();

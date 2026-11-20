@@ -70,18 +70,14 @@ CREATE TABLE IF NOT EXISTS tb_status_barang (
     nama_status TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS tb_status_bayar (
-    id_status_bayar INTEGER PRIMARY KEY,
-    nama_status TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS tb_pengguna (
     id_pengguna INTEGER PRIMARY KEY AUTOINCREMENT,
     nama_lengkap TEXT,
     username TEXT NOT NULL,
     peran TEXT,
     id_role INTEGER NOT NULL,
-    is_aktif INTEGER NOT NULL
+    is_aktif INTEGER NOT NULL,
+    password_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tb_panen (
@@ -93,7 +89,6 @@ CREATE TABLE IF NOT EXISTS tb_panen (
     id_kualitas INTEGER NOT NULL,
     id_petugas INTEGER NOT NULL,
     id_status_barang INTEGER NOT NULL,
-    id_status_bayar INTEGER NOT NULL,
     berat_kg REAL NOT NULL,
     harga_saat_transaksi REAL NOT NULL,
     persen_penalti REAL NOT NULL,
@@ -103,6 +98,66 @@ CREATE TABLE IF NOT EXISTS tb_panen (
                     using (SQLiteCommand cmd = new SQLiteCommand(createTables, conn))
                     {
                         cmd.ExecuteNonQuery();
+                    }
+
+                    // Migrasi autentikasi: tambahkan kolom hash tanpa menghapus akun lama.
+                    bool hasPasswordHash = false;
+                    using (SQLiteCommand pragmaUser = new SQLiteCommand("PRAGMA table_info(tb_pengguna)", conn))
+                    using (SQLiteDataReader userReader = pragmaUser.ExecuteReader())
+                    {
+                        while (userReader.Read())
+                            if (string.Equals(userReader["name"].ToString(), "password_hash", StringComparison.OrdinalIgnoreCase))
+                                hasPasswordHash = true;
+                    }
+                    if (!hasPasswordHash)
+                    {
+                        using (SQLiteCommand addPasswordColumn = new SQLiteCommand("ALTER TABLE tb_pengguna ADD COLUMN password_hash TEXT", conn))
+                            addPasswordColumn.ExecuteNonQuery();
+                    }
+
+                    // Migrasi aman dari skema lama: hapus status pembayaran yang tidak lagi digunakan.
+                    bool hasPaymentColumn = false;
+                    using (SQLiteCommand pragma = new SQLiteCommand("PRAGMA table_info(tb_panen)", conn))
+                    using (SQLiteDataReader reader = pragma.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            if (string.Equals(reader["name"].ToString(), "id_status_bayar", StringComparison.OrdinalIgnoreCase))
+                                hasPaymentColumn = true;
+                        }
+                    }
+                    if (hasPaymentColumn)
+                    {
+                        using (SQLiteCommand migration = new SQLiteCommand(@"
+BEGIN TRANSACTION;
+CREATE TABLE tb_panen_new (
+    id_panen INTEGER PRIMARY KEY AUTOINCREMENT,
+    no_transaksi TEXT NOT NULL,
+    tgl_masuk DATETIME NOT NULL,
+    id_petani INTEGER NOT NULL,
+    id_komoditas INTEGER NOT NULL,
+    id_kualitas INTEGER NOT NULL,
+    id_petugas INTEGER NOT NULL,
+    id_status_barang INTEGER NOT NULL,
+    berat_kg REAL NOT NULL,
+    harga_saat_transaksi REAL NOT NULL,
+    persen_penalti REAL NOT NULL,
+    total_uang REAL NOT NULL
+);
+INSERT INTO tb_panen_new (id_panen, no_transaksi, tgl_masuk, id_petani, id_komoditas, id_kualitas, id_petugas, id_status_barang, berat_kg, harga_saat_transaksi, persen_penalti, total_uang)
+SELECT id_panen, no_transaksi, tgl_masuk, id_petani, id_komoditas, id_kualitas, id_petugas, id_status_barang, berat_kg, harga_saat_transaksi, persen_penalti, total_uang FROM tb_panen;
+DROP TABLE tb_panen;
+ALTER TABLE tb_panen_new RENAME TO tb_panen;
+DROP TABLE IF EXISTS tb_status_bayar;
+COMMIT;", conn))
+                        {
+                            migration.ExecuteNonQuery();
+                        }
+                    }
+                    else
+                    {
+                        using (SQLiteCommand dropLegacy = new SQLiteCommand("DROP TABLE IF EXISTS tb_status_bayar", conn))
+                            dropLegacy.ExecuteNonQuery();
                     }
 
                     // Seed data master
@@ -117,9 +172,6 @@ INSERT OR REPLACE INTO tb_status_barang (id_status_barang, nama_status) VALUES
 (2, 'Terkirim'),
 (3, 'Dibatalkan');
 
-INSERT OR REPLACE INTO tb_status_bayar (id_status_bayar, nama_status) VALUES 
-(1, 'Belum Bayar'),
-(2, 'Sudah Bayar');
 
                     INSERT OR IGNORE INTO tb_pengguna (id_pengguna, nama_lengkap, username, peran, id_role, is_aktif) VALUES 
 (1, 'Bu Rani', 'rani', 'Admin', 1, 0),
@@ -130,6 +182,15 @@ INSERT OR REPLACE INTO tb_status_bayar (id_status_bayar, nama_status) VALUES
                     using (SQLiteCommand cmd = new SQLiteCommand(seedMaster, conn))
                     {
                         cmd.ExecuteNonQuery();
+                    }
+
+                    // Akun lama dan akun contoh mendapat kata sandi awal 12345 (disimpan sebagai hash).
+                    string defaultPasswordHash = AGRIVA.Models.PasswordHasher.Hash("12345");
+                    using (SQLiteCommand setDefaultPasswords = new SQLiteCommand(
+                        "UPDATE tb_pengguna SET password_hash=@hash WHERE password_hash IS NULL OR password_hash=''", conn))
+                    {
+                        setDefaultPasswords.Parameters.AddWithValue("@hash", defaultPasswordHash);
+                        setDefaultPasswords.ExecuteNonQuery();
                     }
 
                     // Seed data petani contoh (sesuai Figma) jika kosong
@@ -160,7 +221,7 @@ INSERT INTO tb_petani (nama_petani, desa, no_telepon, luas_lahan_hektar, is_akti
                     using (SQLiteCommand checkKomoditas = new SQLiteCommand("SELECT COUNT(*) FROM tb_komoditas", conn))
                     {
                         long count = (long)checkKomoditas.ExecuteScalar();
-                        if (count <= 5)
+                        if (count == 0)
                         {
                             string seedKomoditas = @"
 DELETE FROM tb_komoditas;
@@ -183,17 +244,17 @@ INSERT INTO tb_komoditas (id_komoditas, nama_komoditas, harga_per_kg, tgl_update
                     using (SQLiteCommand checkPanen = new SQLiteCommand("SELECT COUNT(*) FROM tb_panen", conn))
                     {
                         long count = (long)checkPanen.ExecuteScalar();
-                        if (count <= 4)
+                        if (count == 0)
                         {
                             string seedPanen = @"
 DELETE FROM tb_panen;
-INSERT INTO tb_panen (no_transaksi, tgl_masuk, id_petani, id_komoditas, id_kualitas, id_petugas, id_status_barang, id_status_bayar, berat_kg, harga_saat_transaksi, persen_penalti, total_uang) VALUES
+INSERT INTO tb_panen (no_transaksi, tgl_masuk, id_petani, id_komoditas, id_kualitas, id_petugas, id_status_barang, berat_kg, harga_saat_transaksi, persen_penalti, total_uang) VALUES
 ('TRX-20241101001', '2024-11-01 10:15:00', 1, 4, 1, 1, 1, 2, 6.0, 7733.33, 0.0, 46400.0),
 ('TRX-20250525002', '2025-05-25 14:30:00', 2, 1, 2, 1, 2, 2, 10.0, 12000.0, 5.0, 120000.0),
-('TRX-20260112003', '2026-01-12 09:20:00', 4, 5, 2, 1, 3, 1, 3.0, 60000.0, 5.0, 180000.0),
-('TRX-20260709004', '2026-07-09 11:45:00', 5, 6, 1, 1, 2, 2, 5.0, 22060.0, 0.0, 110300.0),
-('TRX-TODAY-001', datetime('now', '-2 hours'), 2, 2, 1, 1, 1, 2, 6.0, 9800.0, 0.0, 58800.0),
-('TRX-TODAY-002', datetime('now', '-30 minutes'), 4, 1, 2, 1, 1, 2, 10.0, 5200.0, 5.0, 49400.0);
+('TRX-20260112003', '2026-01-12 09:20:00', 4, 5, 2, 1, 3, 3.0, 60000.0, 5.0, 180000.0),
+('TRX-20260709004', '2026-07-09 11:45:00', 5, 6, 1, 1, 2, 5.0, 22060.0, 0.0, 110300.0),
+('TRX-TODAY-001', datetime('now', '-2 hours'), 2, 2, 1, 1, 1, 6.0, 9800.0, 0.0, 58800.0),
+('TRX-TODAY-002', datetime('now', '-30 minutes'), 4, 1, 2, 1, 1, 10.0, 5200.0, 5.0, 49400.0);
 ";
                             using (SQLiteCommand cmd = new SQLiteCommand(seedPanen, conn))
                             {

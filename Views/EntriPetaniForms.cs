@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -8,11 +8,15 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Web;
 using System.Windows.Forms;
+using AGRIVA.Controllers;
+using AGRIVA.Models;
 
 namespace AGRIVA
 {
     public partial class EntriPetaniForms : Form
     {
+        private readonly PetaniController petaniController = new PetaniController();
+
         public EntriPetaniForms()
         {
             InitializeComponent();
@@ -60,26 +64,15 @@ namespace AGRIVA
 
             try
             {
-                using (var conn = Koneksi.GetConnection())
+                var petani = new Petani
                 {
-                    conn.Open();
-
-                    string query = @"INSERT INTO tb_petani
-                (nama_petani, desa, no_telepon, luas_lahan_hektar, is_aktif)
-                VALUES
-                (@nama,  @desa, @telepon, @luas, @status)";
-
-                    using (var cmd = new System.Data.SQLite.SQLiteCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@nama", txtNamaPetani.Text.Trim());
-                        cmd.Parameters.AddWithValue("@desa", txtDesa.Text.Trim());
-                        cmd.Parameters.AddWithValue("@telepon", txtNoHP.Text.Trim());
-                        cmd.Parameters.AddWithValue("@luas", luasLahan);
-                        cmd.Parameters.AddWithValue("@status", statusAktif);
-
-                        cmd.ExecuteNonQuery();
-                    }
-                }
+                    NamaPetani = txtNamaPetani.Text.Trim(),
+                    Desa = txtDesa.Text.Trim(),
+                    NoTelepon = txtNoHP.Text.Trim(),
+                    LuasLahanHektar = luasLahan,
+                    IsAktif = statusAktif
+                };
+                petaniController.SimpanPetani(petani);
 
                 MessageBox.Show(
                     "Data petani berhasil disimpan!",
