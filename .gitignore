@@ -52,7 +52,6 @@ Generated\ Files/
 [Bb]uild[Ll]og.*
 
 # NUnit
-nuget.exe
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
