@@ -95,6 +95,8 @@ namespace AGRIVA
 
         private void DashboardForm_Load(object sender, EventArgs e)
         {
+            HideAllModalCards();
+            pnlModalOverlay.Visible = false;
             SetupPaints();
             SetupPetaniGrid();
             SetupProdukGrid();
@@ -1725,18 +1727,12 @@ namespace AGRIVA
             lblBatalTotal.Text = total;
             txtAlasanBatal.Text = "";
 
-            pnlModalCard.Visible = false;
-            pnlModalProdukCard.Visible = false;
-            pnlModalUserCard.Visible = false;
-            pnlModalBatalCard.Visible = true;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
-            LayoutAll();
+            ShowModalCard(pnlModalBatalCard);
         }
 
         private void CloseModalBatal()
         {
-            pnlModalBatalCard.Visible = false;
+            HideAllModalCards();
             pnlModalOverlay.Visible = false;
         }
 
@@ -2069,6 +2065,26 @@ namespace AGRIVA
         }
 
         // ══════════════════════════════════════════════════════════
+        // Semua dialog memakai satu overlay. Pastikan hanya satu kartu modal yang aktif.
+        private void HideAllModalCards()
+        {
+            pnlModalCard.Visible = false;
+            pnlModalProdukCard.Visible = false;
+            pnlModalBatalCard.Visible = false;
+            pnlModalUserCard.Visible = false;
+        }
+
+        private void ShowModalCard(Panel activeCard)
+        {
+            HideAllModalCards();
+            activeCard.Visible = true;
+            pnlModalOverlay.Visible = true;
+            pnlModalOverlay.BringToFront();
+            activeCard.BringToFront();
+            LayoutAll();
+            activeCard.Invalidate();
+        }
+
         // MODALS (PETANI & PRODUK)
         // ══════════════════════════════════════════════════════════
         private void OpenModalTambah()
@@ -2083,10 +2099,7 @@ namespace AGRIVA
             cmbModalStatus.SelectedIndex = 0;
 
             ClearValidationErrors();
-            pnlModalCard.Visible = true;
-            pnlModalProdukCard.Visible = false;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
+            ShowModalCard(pnlModalCard);
             txtModalNama.Focus();
         }
 
@@ -2105,17 +2118,14 @@ namespace AGRIVA
             cmbModalStatus.SelectedIndex = status == "Aktif" ? 0 : 1;
 
             ClearValidationErrors();
-            pnlModalCard.Visible = true;
-            pnlModalProdukCard.Visible = false;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
+            ShowModalCard(pnlModalCard);
             txtModalNama.Focus();
         }
 
         private void CloseModal()
         {
+            HideAllModalCards();
             pnlModalOverlay.Visible = false;
-            pnlModalCard.Visible = false;
             ClearValidationErrors();
         }
 
@@ -2187,10 +2197,7 @@ namespace AGRIVA
             cmbModalProdStatus.SelectedIndex = 0;
 
             ClearProdukValidationErrors();
-            pnlModalCard.Visible = false;
-            pnlModalProdukCard.Visible = true;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
+            ShowModalCard(pnlModalProdukCard);
             txtModalProdNama.Focus();
         }
 
@@ -2207,17 +2214,14 @@ namespace AGRIVA
             cmbModalProdStatus.SelectedIndex = status == "Aktif" ? 0 : 1;
 
             ClearProdukValidationErrors();
-            pnlModalCard.Visible = false;
-            pnlModalProdukCard.Visible = true;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
+            ShowModalCard(pnlModalProdukCard);
             txtModalProdNama.Focus();
         }
 
         private void CloseModalProduk()
         {
+            HideAllModalCards();
             pnlModalOverlay.Visible = false;
-            pnlModalProdukCard.Visible = false;
             ClearProdukValidationErrors();
         }
 
@@ -3026,13 +3030,7 @@ namespace AGRIVA
             lblErrUserNama.Visible = false;
             lblErrUserUname.Visible = false;
 
-            pnlModalCard.Visible = false;
-            pnlModalProdukCard.Visible = false;
-            pnlModalBatalCard.Visible = false;
-            pnlModalUserCard.Visible = true;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
-            LayoutAll();
+            ShowModalCard(pnlModalUserCard);
         }
 
         private void OpenModalEditUser(int id, string nama, string uname, string peran, string status)
@@ -3052,18 +3050,12 @@ namespace AGRIVA
             lblErrUserNama.Visible = false;
             lblErrUserUname.Visible = false;
 
-            pnlModalCard.Visible = false;
-            pnlModalProdukCard.Visible = false;
-            pnlModalBatalCard.Visible = false;
-            pnlModalUserCard.Visible = true;
-            pnlModalOverlay.Visible = true;
-            pnlModalOverlay.BringToFront();
-            LayoutAll();
+            ShowModalCard(pnlModalUserCard);
         }
 
         private void CloseModalUser()
         {
-            pnlModalUserCard.Visible = false;
+            HideAllModalCards();
             pnlModalOverlay.Visible = false;
         }
 
